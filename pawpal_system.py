@@ -50,13 +50,11 @@ class CareTask:
         pass
 
 
+@dataclass
 class DailyScheduler:
-    def __init__(
-        self, tasks: List[CareTask], owner_profile: OwnerProfile, pet: Pet
-    ) -> None:
-        self.tasks = tasks
-        self.owner_profile = owner_profile
-        self.pet = pet
+    tasks: List[CareTask]
+    owner_profile: OwnerProfile
+    pet: Pet
 
     def generate_plan(self) -> List[CareTask]:
         pass
