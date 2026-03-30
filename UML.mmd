@@ -1,0 +1,43 @@
+classDiagram
+    class OwnerProfile {
+        +owner_name: String
+        +available_minutes_per_day: int
+        +preferred_time_windows: List~String~
+        +update_availability(minutes: int): void
+        +set_time_preferences(windows: List~String~): void
+    }
+
+    class Pet {
+        +name: String
+        +species: String
+        +age: int
+        +care_notes: String
+        +update_profile(name: String, species: String, age: int, care_notes: String): void
+        +get_summary(): String
+    }
+
+    class CareTask {
+        +title: String
+        +category: String
+        +duration_minutes: int
+        +priority: int
+        +preferred_window: String
+        +is_required: bool
+        +update_task(...): void
+        +fits_window(window: String): bool
+        +priority_score(): float
+    }
+
+    class DailyScheduler {
+        +tasks: List~CareTask~
+        +owner_profile: OwnerProfile
+        +pet: Pet
+        +generate_plan(): List~CareTask~
+        +explain_plan(): String
+        +get_unscheduled_tasks(): List~CareTask~
+    }
+
+    OwnerProfile "1" --> "1" Pet : owns
+    DailyScheduler "1" --> "1" OwnerProfile : uses
+    DailyScheduler "1" --> "1" Pet : plans for
+    DailyScheduler "1" *-- "*" CareTask : manages
