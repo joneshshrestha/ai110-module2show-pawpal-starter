@@ -22,6 +22,23 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Features
+
+- Priority-based planning under a daily time budget: pending tasks are ranked by computed priority score, owner time-window preference, task duration, and title; tasks are then scheduled greedily until available minutes are used.
+- Priority scoring heuristic: each task score combines base priority, a bonus for required tasks, and a small tie-break boost for shorter tasks.
+- Owner preference-aware scheduling: tasks in preferred windows are ranked ahead of non-preferred or unspecified windows.
+- Sorting by time (`HH:MM`): tasks can be sorted by `scheduled_time`, with missing times safely placed last and invalid formats validated.
+- Task filtering: tasks can be filtered by completion state (`is_completed`) and/or pet name (case-insensitive).
+- Daily and weekly recurrence: completing a `daily` or `weekly` task auto-generates the next occurrence with a new due date and unique task ID.
+- Conflict warnings (non-crashing): same-time task collisions generate warning messages, including cross-pet conflicts and invalid `scheduled_time` values.
+- Plan explainability: generated output distinguishes scheduled vs. unscheduled tasks and reports unscheduled items when time is insufficient.
+- Multi-source task deduplication: scheduler-visible tasks are merged and deduplicated by `task_id` across owner, pet, and direct scheduler task lists.
+
+## Screenshots
+<a href="images/screenshot-1.jpg" target="_blank"><img src='images/screenshot-1.jpg' title='PawPal App 1' width='' alt='PawPal App' class='center-block' /></a>
+<a href="images/screenshot-2.jpg" target="_blank"><img src='images/screenshot-2.jpg' title='PawPal App 2' width='' alt='PawPal App' class='center-block' /></a>
+
+
 ## Smarter Scheduling
 
 Recent updates add practical scheduling behavior beyond basic sorting:

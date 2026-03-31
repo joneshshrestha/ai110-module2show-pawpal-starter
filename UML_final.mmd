@@ -1,0 +1,70 @@
+classDiagram
+    class OwnerProfile {
+        +owner_name: String
+        +available_minutes_per_day: int
+        +preferred_time_windows: List~String~
+        +pets: List~Pet~
+        +update_availability(minutes: int): void
+        +set_time_preferences(windows: List~String~): void
+        +add_pet(pet: Pet): void
+        +remove_pet(pet_name: String): void
+        +get_all_tasks(): List~CareTask~
+    }
+
+    class Pet {
+        +name: String
+        +species: String
+        +age: int
+        +care_notes: String
+        +tasks: List~CareTask~
+        +update_profile(name: String, species: String, age: int, care_notes: String): void
+        +get_summary(): String
+        +add_task(task: CareTask): void
+        +remove_task(task_id: String): void
+    }
+
+    class CareTask {
+        +task_id: String
+        +title: String
+        +category: String
+        +duration_minutes: int
+        +priority: int
+        +preferred_window: String?
+        +is_required: bool
+        +frequency: String
+        +due_date: date?
+        +scheduled_time: String?
+        +is_completed: bool
+        +pet_name: String?
+        +update_task(...): void
+        +fits_window(window: String): bool
+        +priority_score(): float
+        +mark_complete(): void
+        +recurrence_delta(): timedelta?
+    }
+
+    class DailyScheduler {
+        +owner_profile: OwnerProfile
+        +tasks: List~CareTask~
+        +pet: Pet?
+        +last_generated_plan: List~CareTask~
+        +last_unscheduled_tasks: List~CareTask~
+        -_collect_unique_tasks(): List~CareTask~
+        -_find_task_by_id(task_id: String): CareTask?
+        -_build_next_task_id(current_task_id: String, next_due_date: date): String
+        -_attach_task_to_source(source_task: CareTask, new_task: CareTask): void
+        +complete_task(task_id: String, completed_on: date?): CareTask?
+        -_parse_hhmm(value: String): Tuple~int,int~
+        +filter_tasks(is_completed: bool?, pet_name: String?, tasks: List~CareTask~?): List~CareTask~
+        +generate_plan(): List~CareTask~
+        +sort_by_time(tasks: List~CareTask~?): List~CareTask~
+        +detect_time_conflicts(tasks: List~CareTask~?): List~String~
+        +explain_plan(): String
+        +get_unscheduled_tasks(): List~CareTask~
+    }
+
+    OwnerProfile "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" CareTask : has
+    DailyScheduler "1" --> "1" OwnerProfile : uses
+    DailyScheduler "1" --> "0..1" Pet : optional context
+    DailyScheduler "1" --> "0..*" CareTask : plans/manages

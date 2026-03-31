@@ -44,6 +44,18 @@ owner_name = st.text_input("Owner name", value="Jordan")
 pet_name = st.text_input("Pet name", value="Mochi")
 species = st.selectbox("Species", ["dog", "cat", "other"])
 
+
+def task_to_row(task: CareTask) -> dict:
+    return {
+        "task_id": task.task_id,
+        "pet": task.pet_name or "-",
+        "title": task.title,
+        "duration_minutes": task.duration_minutes,
+        "priority": task.priority,
+        "scheduled_time": task.scheduled_time or "-",
+    }
+
+
 if "owner_profile" not in st.session_state or not isinstance(
     st.session_state["owner_profile"], OwnerProfile
 ):
@@ -98,7 +110,7 @@ st.caption(
 if "tasks" not in st.session_state:
     st.session_state.tasks = []
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     task_title = st.text_input("Task title", value="Morning walk")
 with col2:
@@ -107,6 +119,8 @@ with col2:
     )
 with col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+with col4:
+    scheduled_time = st.text_input("Scheduled time", value="08:00")
 
 priority_map = {"low": 1, "medium": 2, "high": 3}
 
@@ -126,13 +140,16 @@ if st.button("Add task"):
         category="general",
         duration_minutes=int(duration),
         priority=priority_map[priority],
+        scheduled_time=scheduled_time.strip() or None,
     )
     selected_pet.add_task(task)
     st.session_state.tasks.append(
         {
+            "pet": selected_pet.name,
             "title": task.title,
             "duration_minutes": task.duration_minutes,
             "priority": priority,
+            "scheduled_time": task.scheduled_time or "-",
         }
     )
 
@@ -149,9 +166,32 @@ st.caption("This button should call your scheduling logic once you implement it.
 
 if st.button("Generate schedule"):
     scheduler = DailyScheduler(owner_profile=owner_profile)
+    open_tasks = scheduler.filter_tasks(is_completed=False)
     plan = scheduler.generate_plan()
     if not plan:
         st.warning("No tasks could be scheduled. Add tasks first.")
     else:
-        st.success("Schedule generated")
-        st.text(scheduler.explain_plan())
+        st.caption("Open tasks (filtered)")
+        st.table([task_to_row(task) for task in scheduler.sort_by_time(open_tasks)])
+
+        sorted_plan = scheduler.sort_by_time(plan)
+        unscheduled = scheduler.get_unscheduled_tasks()
+        conflict_warnings = scheduler.detect_time_conflicts(sorted_plan)
+
+        st.success(f"Schedule generated: {len(sorted_plan)} task(s) scheduled.")
+        st.table([task_to_row(task) for task in sorted_plan])
+
+        if unscheduled:
+            st.warning(f"{len(unscheduled)} task(s) could not fit in available time.")
+            st.table([task_to_row(task) for task in unscheduled])
+        else:
+            st.success("All open tasks fit into today's available time.")
+
+        if conflict_warnings:
+            for warning in conflict_warnings:
+                st.warning(warning)
+        else:
+            st.success("No time conflicts detected in the scheduled tasks.")
+
+        with st.expander("Plan explanation"):
+            st.text(scheduler.explain_plan())

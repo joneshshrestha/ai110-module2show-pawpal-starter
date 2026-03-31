@@ -376,23 +376,27 @@ class DailyScheduler:
         self.last_unscheduled_tasks = unscheduled
         return list(self.last_generated_plan)
 
+    def _safe_parse_hhmm(self, value: Optional[str]) -> tuple[bool, tuple[int, int]]:
+        """Parse a time string, returning (is_invalid, parsed_time) for sorting."""
+        if value is None:
+            return (True, (24, 60))
+        try:
+            return (False, self._parse_hhmm(value))
+        except ValueError:
+            return (True, (24, 60))
+
     def sort_by_time(self, tasks: Optional[List[CareTask]] = None) -> List[CareTask]:
         """Return tasks sorted by scheduled_time (HH:MM).
 
         If tasks is omitted, sorts the last generated plan.
-        Tasks without scheduled_time are placed at the end.
+        Tasks without scheduled_time or with invalid times are placed at the end.
         """
         tasks_to_sort = self.last_generated_plan if tasks is None else list(tasks)
 
         return sorted(
             tasks_to_sort,
             key=lambda task: (
-                task.scheduled_time is None,
-                (
-                    (24, 60)
-                    if task.scheduled_time is None
-                    else self._parse_hhmm(task.scheduled_time)
-                ),
+                *self._safe_parse_hhmm(task.scheduled_time),
                 task.title.lower(),
             ),
         )

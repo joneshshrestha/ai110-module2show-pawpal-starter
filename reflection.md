@@ -29,13 +29,14 @@
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+- The scheduler considers three constraints: the owner's `available_minutes_per_day` as a hard budget, each task's `priority_score()` (which combines numeric priority, a required-task bonus, and a slight preference for shorter tasks), and the owner's `preferred_time_windows` as a soft tiebreaker for ordering.
+- Time budget had to be the hardest constraint because my initial UML already put `available_minutes_per_day` on `OwnerProfile` as the central planning limit. Priority came next because during the second implementation phase I added `is_required` and `frequency` fields, and required recurring tasks like medication clearly need to come before optional ones. Window preferences rank last because they shape convenience, not necessity.
 
 **b. Tradeoffs**
 
 - One tradeoff is that my conflict checker only flags exact matching `scheduled_time` values (for example, both tasks at `07:45`) instead of detecting duration overlaps (for example, one task from `07:30-08:00` and another from `07:45-08:15`).
 - This is reasonable for the current scope because it keeps the algorithm lightweight, easy to understand, and stable for beginner-level scheduling logic while still catching the most obvious conflicts a pet owner would notice.
+- Another tradeoff is that `generate_plan()` uses a greedy packing approach — it walks tasks in priority order and takes each one if it fits the remaining minutes. A knapsack-style optimizer could fit more total value, but greedy was easy to reason about and matched the way a real person would plan: do the most important thing first, then the next, until time runs out.
 
 ---
 
@@ -43,13 +44,14 @@
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+- I used VS Code Copilot across separate chat sessions for each project phase. The first session focused on drafting the initial UML and generating class skeletons from it. A second session handled the core implementation — filling in method bodies for `OwnerProfile`, `Pet`, `CareTask`, and the first version of `generate_plan()` and `explain_plan()`. A third session added the second wave of features: `filter_tasks`, `sort_by_time`, `complete_task` with recurrence, and `detect_time_conflicts`. A final session wired everything into the Streamlit UI and debugged the app end-to-end.
+- Keeping sessions separate helped me stay organized. Each session had a clear scope, so the AI's suggestions stayed focused instead of drifting across unrelated parts of the codebase. When I started the UI session, I could describe the backend as "already done" and focus purely on integration.
+- Copilot's inline completions were most effective when I already had a method signature and docstring written — for example, once `_collect_unique_tasks` had its docstring explaining the three task sources, the deduplication logic came out almost exactly right. Chat mode was more useful for bigger-picture work like reviewing the whole app for bugs or asking how data flows between classes.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+- When I moved from my initial UML to the updated UML, Copilot suggested making `DailyScheduler` accept all its fields through `__init__` parameters. I rejected that and switched `DailyScheduler` to a `@dataclass` with `owner_profile` as the only required field and `tasks`/`pet` as optional. My reasoning was that the scheduler should work with just an owner profile (pulling tasks from the owner's pets), and forcing callers to always pass a separate task list and pet felt rigid.
+- Later, when I asked the AI to audit the app for bugs, it flagged four issues ranging from a real crash to cosmetic inconsistencies. I only applied the one fix that was actually necessary — `sort_by_time` crashing on invalid time input — and told it to skip the rest. I verified the fix was consistent by checking that `detect_time_conflicts` already handled the same scenario with try/except, so I knew the pattern was right for this codebase.
 
 ---
 
@@ -57,13 +59,16 @@
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+- I wrote six focused tests in `tests/test_pawpal.py` targeting the behaviors I was least confident about after implementation.
+- `test_task_completion_marks_task_as_completed` and `test_adding_task_increases_pet_task_count` verify the basic building blocks — if `mark_complete` or `add_task` broke, everything downstream would silently produce wrong results.
+- `test_complete_task_creates_next_daily_occurrence` and `test_complete_task_creates_next_weekly_occurrence` check that recurring tasks get the correct next `due_date` (one day or one week later) and a fresh `task_id`. I wrote these because the recurrence logic in `complete_task` touches `replace()`, `_build_next_task_id`, and `_attach_task_to_source` all at once, so it was the most error-prone path.
+- `test_complete_task_non_recurring_returns_none` confirms that a one-off task (frequency `"once"`) does not accidentally spawn a next occurrence.
+- `test_detect_time_conflicts_returns_warning_message` sets up two pets with tasks at the same `scheduled_time` and checks that the conflict detector produces exactly one warning mentioning that time. This was important because the conflict logic distinguishes same-pet vs. cross-pet warnings, and I wanted to make sure the cross-pet path worked.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+- I am fairly confident the scheduler handles normal usage correctly. The priority scoring, greedy packing, recurrence, and conflict detection all have direct test coverage.
+- With more time I would test edge cases like: a task whose duration exactly equals the remaining budget, an owner with zero available minutes, duplicate `task_id` collisions when the same recurring task is completed twice on the same day, and what happens when `scheduled_time` contains an invalid string in the full UI flow (which I already patched in `sort_by_time` but did not add a test for).
 
 ---
 
@@ -71,12 +76,15 @@
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+- I am most satisfied with how the UML-first approach paid off. Starting with a clear initial diagram, then evolving it into the final version with `task_id`, `TimeWindow`, `pets` on `OwnerProfile`, and `tasks` on `Pet`, meant that by the time I started coding I already knew how the pieces connected. The second implementation phase (sorting, filtering, recurrence, conflicts) slotted in without restructuring anything because the data model was solid from the start.
+- Breaking the work into phased commits also helped. The skeleton commit gave me something runnable immediately, and each subsequent commit added a coherent slice of functionality that I could test before moving on.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+- The UI still stores tasks in two places — `st.session_state.tasks` (for display) and the actual `Pet.tasks` objects (for scheduling). If I had another iteration I would remove the session-state copy and build the display table directly from the pet data so they never drift apart.
+- I would also add a UI control for `available_minutes_per_day` instead of hardcoding it to 120, and add input validation on the scheduled time field so users cannot type something that would have crashed `sort_by_time` before I patched it.
+- On the backend side, I would extend the conflict checker to detect duration overlaps, not just exact time matches.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+- The most important thing I learned is that AI works best when I stay in the architect role. Across every phase of this project - UML design, skeleton generation, implementation, UI wiring, debugging - the best results came when I gave the AI a clear, scoped task and then reviewed what it produced against my own understanding of the design. When I asked vague questions I got generic answers, but when I asked specific ones like "how does the task know which pet it belongs to?" I got insights that led to real improvements. The AI is a powerful collaborator, but it needs me to set the direction and decide what is worth keeping.
