@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from typing import List, Literal, Optional
 
 
@@ -94,6 +95,7 @@ class CareTask:
     preferred_window: Optional[TimeWindow] = None
     is_required: bool = False
     frequency: str = "daily"
+    due_date: Optional[date] = None
     scheduled_time: Optional[str] = None
     is_completed: bool = False
     pet_name: Optional[str] = None
@@ -108,6 +110,7 @@ class CareTask:
             "preferred_window",
             "is_required",
             "frequency",
+            "due_date",
             "scheduled_time",
             "is_completed",
             "pet_name",
@@ -144,6 +147,21 @@ class CareTask:
         """Mark the task as completed."""
         self.is_completed = True
 
+    def recurrence_delta(self) -> Optional[timedelta]:
+        """Return a recurrence interval for supported frequencies.
+
+        Supported values:
+        - daily -> 1 day
+        - weekly -> 1 week
+        Any other value returns None (non-recurring).
+        """
+        normalized_frequency = self.frequency.strip().lower()
+        if normalized_frequency == "daily":
+            return timedelta(days=1)
+        if normalized_frequency == "weekly":
+            return timedelta(weeks=1)
+        return None
+
 
 @dataclass
 class DailyScheduler:
@@ -153,25 +171,172 @@ class DailyScheduler:
     last_generated_plan: List[CareTask] = field(default_factory=list)
     last_unscheduled_tasks: List[CareTask] = field(default_factory=list)
 
-    def generate_plan(self) -> List[CareTask]:
-        """Build a daily schedule from available and pending tasks."""
-        available_minutes = self.owner_profile.available_minutes_per_day
-        preferred_windows = self.owner_profile.preferred_time_windows
+    def _collect_unique_tasks(self) -> List[CareTask]:
+        """Return all scheduler-visible tasks deduplicated by task_id.
 
+        Tasks can come from:
+        - scheduler.tasks
+        - owner_profile pets
+        - optional standalone scheduler.pet
+        """
         collected_tasks: List[CareTask] = []
         collected_tasks.extend(self.tasks)
         collected_tasks.extend(self.owner_profile.get_all_tasks())
         if self.pet and self.pet not in self.owner_profile.pets:
             collected_tasks.extend(self.pet.tasks)
 
-        # Deduplicate by task_id while preserving first occurrence.
-        deduped_tasks: List[CareTask] = []
+        unique_tasks: List[CareTask] = []
         seen_task_ids = set()
         for task in collected_tasks:
             if task.task_id in seen_task_ids:
                 continue
             seen_task_ids.add(task.task_id)
-            deduped_tasks.append(task)
+            unique_tasks.append(task)
+        return unique_tasks
+
+    def _find_task_by_id(self, task_id: str) -> Optional[CareTask]:
+        """Find and return a task by task_id, or None when not found."""
+        for task in self._collect_unique_tasks():
+            if task.task_id == task_id:
+                return task
+        return None
+
+    def _build_next_task_id(self, current_task_id: str, next_due_date: date) -> str:
+        """Create a unique task_id for the next recurring task instance."""
+        base_id = f"{current_task_id}-next-{next_due_date.isoformat()}"
+        existing_ids = {task.task_id for task in self._collect_unique_tasks()}
+
+        if base_id not in existing_ids:
+            return base_id
+
+        suffix = 2
+        candidate = f"{base_id}-{suffix}"
+        while candidate in existing_ids:
+            suffix += 1
+            candidate = f"{base_id}-{suffix}"
+        return candidate
+
+    def _attach_task_to_source(self, source_task: CareTask, new_task: CareTask) -> None:
+        """Attach a generated recurring task to the same source collection.
+
+        Priority of attachment:
+        1. scheduler.tasks
+        2. matching pet in owner_profile
+        3. scheduler.pet
+        4. fallback to scheduler.tasks
+        """
+        if source_task in self.tasks:
+            self.tasks.append(new_task)
+            return
+
+        if source_task.pet_name:
+            pet = next(
+                (
+                    candidate
+                    for candidate in self.owner_profile.pets
+                    if candidate.name == source_task.pet_name
+                ),
+                None,
+            )
+            if pet is not None:
+                pet.add_task(new_task)
+                return
+
+        if self.pet and source_task in self.pet.tasks:
+            self.pet.add_task(new_task)
+            return
+
+        self.tasks.append(new_task)
+
+    def complete_task(
+        self,
+        task_id: str,
+        completed_on: Optional[date] = None,
+    ) -> Optional[CareTask]:
+        """Mark a task complete and optionally create its next recurring task.
+
+        A new task is created only when frequency is daily or weekly.
+        The next due_date is computed as:
+        - completed_on + recurrence interval, if completed_on is provided
+        - otherwise task.due_date + recurrence interval, if due_date exists
+        - otherwise date.today() + recurrence interval
+
+        Returns:
+        - CareTask: the newly created next occurrence
+        - None: for non-recurring frequencies
+        """
+        task = self._find_task_by_id(task_id)
+        if task is None:
+            raise ValueError(f"Task '{task_id}' was not found")
+
+        task.mark_complete()
+
+        recurrence = task.recurrence_delta()
+        if recurrence is None:
+            return None
+
+        base_date = completed_on or task.due_date or date.today()
+        next_due_date = base_date + recurrence
+        next_task_id = self._build_next_task_id(task.task_id, next_due_date)
+
+        next_task = replace(
+            task,
+            task_id=next_task_id,
+            due_date=next_due_date,
+            is_completed=False,
+        )
+        self._attach_task_to_source(task, next_task)
+        return next_task
+
+    @staticmethod
+    def _parse_hhmm(value: str) -> tuple[int, int]:
+        """Parse and validate a 24-hour HH:MM time string.
+
+        Raises ValueError when the format is invalid or out of range.
+        """
+        parts = value.split(":")
+        if len(parts) != 2 or not all(part.isdigit() for part in parts):
+            raise ValueError("scheduled_time must be in HH:MM format")
+
+        hour, minute = (int(part) for part in parts)
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("scheduled_time must be a valid 24-hour HH:MM time")
+        return hour, minute
+
+    def filter_tasks(
+        self,
+        is_completed: Optional[bool] = None,
+        pet_name: Optional[str] = None,
+        tasks: Optional[List[CareTask]] = None,
+    ) -> List[CareTask]:
+        """Filter tasks by completion state and/or pet name.
+
+        Args:
+        - is_completed: True for completed, False for open, None for no status filter
+        - pet_name: case-insensitive pet filter; None for no pet filter
+        - tasks: optional input list; defaults to all scheduler-visible tasks
+        """
+        source_tasks = self._collect_unique_tasks() if tasks is None else list(tasks)
+        normalized_pet_name = pet_name.strip().lower() if pet_name else None
+
+        def matches(task: CareTask) -> bool:
+            if is_completed is not None and task.is_completed != is_completed:
+                return False
+            if normalized_pet_name is None:
+                return True
+            return (
+                task.pet_name is not None
+                and task.pet_name.lower() == normalized_pet_name
+            )
+
+        return [task for task in source_tasks if matches(task)]
+
+    def generate_plan(self) -> List[CareTask]:
+        """Build a daily schedule from available and pending tasks."""
+        available_minutes = self.owner_profile.available_minutes_per_day
+        preferred_windows = self.owner_profile.preferred_time_windows
+
+        deduped_tasks = self._collect_unique_tasks()
 
         pending_tasks = [task for task in deduped_tasks if not task.is_completed]
 
@@ -210,6 +375,82 @@ class DailyScheduler:
         self.last_generated_plan = scheduled
         self.last_unscheduled_tasks = unscheduled
         return list(self.last_generated_plan)
+
+    def sort_by_time(self, tasks: Optional[List[CareTask]] = None) -> List[CareTask]:
+        """Return tasks sorted by scheduled_time (HH:MM).
+
+        If tasks is omitted, sorts the last generated plan.
+        Tasks without scheduled_time are placed at the end.
+        """
+        tasks_to_sort = self.last_generated_plan if tasks is None else list(tasks)
+
+        return sorted(
+            tasks_to_sort,
+            key=lambda task: (
+                task.scheduled_time is None,
+                (
+                    (24, 60)
+                    if task.scheduled_time is None
+                    else self._parse_hhmm(task.scheduled_time)
+                ),
+                task.title.lower(),
+            ),
+        )
+
+    def detect_time_conflicts(
+        self,
+        tasks: Optional[List[CareTask]] = None,
+    ) -> List[str]:
+        """Return lightweight warning messages for exact same-time conflicts.
+
+        This method does not raise on conflicts. It also returns warnings for
+        invalid scheduled_time values instead of stopping execution.
+        """
+        source_tasks = self._collect_unique_tasks() if tasks is None else list(tasks)
+        warnings: List[str] = []
+        tasks_by_time: dict[tuple[int, int], List[CareTask]] = {}
+        time_labels: dict[tuple[int, int], str] = {}
+
+        for task in source_tasks:
+            if task.scheduled_time is None:
+                continue
+            try:
+                parsed_time = self._parse_hhmm(task.scheduled_time)
+            except ValueError:
+                warnings.append(
+                    "Warning: "
+                    f"Task '{task.title}' has invalid time '{task.scheduled_time}'."
+                )
+                continue
+
+            tasks_by_time.setdefault(parsed_time, []).append(task)
+            # Keep first-seen HH:MM label for user-facing warnings.
+            if parsed_time not in time_labels:
+                time_labels[parsed_time] = task.scheduled_time
+
+        for parsed_time, time_group in sorted(
+            tasks_by_time.items(),
+        ):
+            if len(time_group) < 2:
+                continue
+
+            scheduled_time = time_labels[parsed_time]
+            pet_names = {task.pet_name or "Unknown pet" for task in time_group}
+            task_labels = ", ".join(
+                f"{task.title} ({task.pet_name or 'Unknown pet'})"
+                for task in time_group
+            )
+            if len(pet_names) == 1:
+                pet_name = next(iter(pet_names))
+                warnings.append(
+                    f"Warning: Conflict at {scheduled_time} for {pet_name}: {task_labels}."
+                )
+            else:
+                warnings.append(
+                    f"Warning: Conflict at {scheduled_time} across pets: {task_labels}."
+                )
+
+        return warnings
 
     def explain_plan(self) -> str:
         """Return a human-readable explanation of the current plan."""

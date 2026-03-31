@@ -1,4 +1,5 @@
 import streamlit as st
+from pawpal_system import CareTask, DailyScheduler, OwnerProfile, Pet
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -43,8 +44,56 @@ owner_name = st.text_input("Owner name", value="Jordan")
 pet_name = st.text_input("Pet name", value="Mochi")
 species = st.selectbox("Species", ["dog", "cat", "other"])
 
+if "owner_profile" not in st.session_state or not isinstance(
+    st.session_state["owner_profile"], OwnerProfile
+):
+    st.session_state["owner_profile"] = OwnerProfile(
+        owner_name=owner_name,
+        available_minutes_per_day=120,
+    )
+
+owner_profile: OwnerProfile = st.session_state["owner_profile"]
+owner_profile.owner_name = owner_name
+
+if st.button("Add pet"):
+    existing_pet = next(
+        (pet for pet in owner_profile.pets if pet.name == pet_name.strip()),
+        None,
+    )
+    try:
+        if existing_pet:
+            existing_pet.update_profile(
+                name=pet_name.strip(),
+                species=species,
+                age=existing_pet.age,
+                care_notes=existing_pet.care_notes,
+            )
+        else:
+            owner_profile.add_pet(
+                Pet(name=pet_name.strip(), species=species, age=0, care_notes="")
+            )
+    except ValueError as exc:
+        st.warning(str(exc))
+    else:
+        st.success(f"Saved pet: {pet_name.strip()}")
+
+if owner_profile.pets:
+    st.caption("Current pets")
+    st.table(
+        [
+            {
+                "name": pet.name,
+                "species": pet.species,
+                "tasks": len(pet.tasks),
+            }
+            for pet in owner_profile.pets
+        ]
+    )
+
 st.markdown("### Tasks")
-st.caption("Add a few tasks. In your final version, these should feed into your scheduler.")
+st.caption(
+    "Add a few tasks. In your final version, these should feed into your scheduler."
+)
 
 if "tasks" not in st.session_state:
     st.session_state.tasks = []
@@ -53,13 +102,38 @@ col1, col2, col3 = st.columns(3)
 with col1:
     task_title = st.text_input("Task title", value="Morning walk")
 with col2:
-    duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
+    duration = st.number_input(
+        "Duration (minutes)", min_value=1, max_value=240, value=20
+    )
 with col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
 
+priority_map = {"low": 1, "medium": 2, "high": 3}
+
 if st.button("Add task"):
+    # Use the current pet fields as the target pet for this task.
+    selected_pet = next(
+        (pet for pet in owner_profile.pets if pet.name == pet_name.strip()),
+        None,
+    )
+    if selected_pet is None:
+        selected_pet = Pet(name=pet_name.strip(), species=species, age=0, care_notes="")
+        owner_profile.add_pet(selected_pet)
+
+    task = CareTask(
+        task_id=f"{selected_pet.name}-{len(selected_pet.tasks) + 1}",
+        title=task_title.strip(),
+        category="general",
+        duration_minutes=int(duration),
+        priority=priority_map[priority],
+    )
+    selected_pet.add_task(task)
     st.session_state.tasks.append(
-        {"title": task_title, "duration_minutes": int(duration), "priority": priority}
+        {
+            "title": task.title,
+            "duration_minutes": task.duration_minutes,
+            "priority": priority,
+        }
     )
 
 if st.session_state.tasks:
@@ -74,15 +148,10 @@ st.subheader("Build Schedule")
 st.caption("This button should call your scheduling logic once you implement it.")
 
 if st.button("Generate schedule"):
-    st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
-    )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
-    )
+    scheduler = DailyScheduler(owner_profile=owner_profile)
+    plan = scheduler.generate_plan()
+    if not plan:
+        st.warning("No tasks could be scheduled. Add tasks first.")
+    else:
+        st.success("Schedule generated")
+        st.text(scheduler.explain_plan())

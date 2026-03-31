@@ -34,8 +34,8 @@
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+- One tradeoff is that my conflict checker only flags exact matching `scheduled_time` values (for example, both tasks at `07:45`) instead of detecting duration overlaps (for example, one task from `07:30-08:00` and another from `07:45-08:15`).
+- This is reasonable for the current scope because it keeps the algorithm lightweight, easy to understand, and stable for beginner-level scheduling logic while still catching the most obvious conflicts a pet owner would notice.
 
 ---
 
